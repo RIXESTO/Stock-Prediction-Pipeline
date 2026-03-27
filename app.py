@@ -44,7 +44,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data(ttl=3600)
-def fetch_and_preprocess(ticker, scaler):
+def fetch_and_preprocess(ticker, _scaler):
     tk = yf.Ticker(ticker)
     data = tk.history(period="1y")
     
