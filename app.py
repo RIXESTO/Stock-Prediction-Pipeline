@@ -52,7 +52,8 @@ def fetch_and_preprocess(ticker, _scaler, api_key):
 
     try:
         ts = TimeSeries(key=api_key, output_format='pandas')
-        data, meta_data = ts.get_daily(symbol=ticker, outputsize='full')
+        # Changed 'full' to 'compact' for the free tier
+        data, meta_data = ts.get_daily(symbol=ticker, outputsize='compact')
         
         data = data.rename(columns={'4. close': 'Close'})
         data = data.sort_index()
