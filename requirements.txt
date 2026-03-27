@@ -4,4 +4,4 @@ numpy
 tensorflow
 scikit-learn
 joblib
-yfinance>=0.2.52
+yfinance>=0.2.61

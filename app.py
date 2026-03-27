@@ -44,7 +44,8 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def fetch_and_preprocess(ticker, scaler):
-    data = yf.download(ticker, period="1y", progress=False)
+    tk = yf.Ticker(ticker)
+    data = tk.history(period="1y")
     
     if data.empty:
         st.error(f"Yahoo Finance API failed to return data for {ticker}. The server may be temporarily rate-limited.")
