@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-import requests
 import joblib
-import yfinance as yf
 import os
+from alpha_vantage.timeseries import TimeSeries
 
 LOOKBACK = 10
 CONFIDENCE_THRESH = 0.60
@@ -15,6 +14,9 @@ st.set_page_config(page_title="Stock Predictor", layout="centered")
 
 st.title("Selective Strategy Stock Predictor")
 st.write("Hybrid LSTM & Random Forest Ensemble Model")
+
+st.sidebar.header("Settings")
+api_key = st.sidebar.text_input("Enter Alpha Vantage API Key", type="password")
 
 tickers = ['GOOG', 'MSFT', 'AAPL', 'NVDA']
 selected_ticker = st.selectbox("Select a Ticker", tickers)
@@ -44,54 +46,48 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 @st.cache_data(ttl=3600)
-def fetch_and_preprocess(ticker, _scaler):
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    })
+def fetch_and_preprocess(ticker, _scaler, api_key):
+    if not api_key:
+        return None, None, None
+
     try:
-        # Pass the session directly to the Ticker object
-        tk = yf.Ticker(ticker, session=session)
-        data = tk.history(period="1y")
+        ts = TimeSeries(key=api_key, output_format='pandas')
+        data, meta_data = ts.get_daily(symbol=ticker, outputsize='full')
         
-        if data.empty:
-            st.error(f"Yahoo Finance returned no data for {ticker}. The service might be temporarily blocked.")
+        data = data.rename(columns={'4. close': 'Close'})
+        data = data.sort_index()
+        
+        df = data[['Close']].copy()
+        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+        
+        sma10 = df['Close'].rolling(window=10).mean()
+        sma50 = df['Close'].rolling(window=50).mean()
+        
+        df['SMA10_Dist'] = (df['Close'] - sma10) / sma10
+        df['SMA50_Dist'] = (df['Close'] - sma50) / sma50
+        df['Volatility'] = df['Log_Returns'].rolling(window=20).std()
+        df['RSI'] = calculate_rsi(df['Close'], window=14)
+        df['Golden_Cross'] = (sma10 > sma50).astype(int)
+        df['Death_Cross'] = (sma10 < sma50).astype(int)
+        
+        df.dropna(inplace=True)
+        
+        features = ['Log_Returns', 'SMA10_Dist', 'SMA50_Dist', 'Volatility', 'RSI', 'Golden_Cross', 'Death_Cross']
+        feature_data = df[features]
+        
+        if feature_data.empty:
             return None, None, None
+        
+        scaled_data = _scaler.transform(feature_data.values)
+        
+        if len(scaled_data) >= LOOKBACK:
+            X_seq = np.array([scaled_data[-LOOKBACK:]])
+            X_flat = np.array([scaled_data[-1]])
+            return X_seq, X_flat, float(df.iloc[-1]['Close'])
             
     except Exception as e:
-        st.error(f"Failed to fetch data: {str(e)}")
+        st.error(f"API Error: {str(e)}")
         return None, None, None
-        
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.droplevel(1)
-        
-    df = data[['Close']].copy()
-    df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    
-    sma10 = df['Close'].rolling(window=10).mean()
-    sma50 = df['Close'].rolling(window=50).mean()
-    
-    df['SMA10_Dist'] = (df['Close'] - sma10) / sma10
-    df['SMA50_Dist'] = (df['Close'] - sma50) / sma50
-    df['Volatility'] = df['Log_Returns'].rolling(window=20).std()
-    df['RSI'] = calculate_rsi(df['Close'], window=14)
-    df['Golden_Cross'] = (sma10 > sma50).astype(int)
-    df['Death_Cross'] = (sma10 < sma50).astype(int)
-    
-    df.dropna(inplace=True)
-    
-    features = ['Log_Returns', 'SMA10_Dist', 'SMA50_Dist', 'Volatility', 'RSI', 'Golden_Cross', 'Death_Cross']
-    feature_data = df[features]
-    
-    if feature_data.empty:
-        return None, None, None
-    
-    scaled_data = _scaler.transform(feature_data.values)
-    
-    if len(scaled_data) >= LOOKBACK:
-        X_seq = np.array([scaled_data[-LOOKBACK:]])
-        X_flat = np.array([scaled_data[-1]])
-        return X_seq, X_flat, float(df.iloc[-1]['Close'])
         
     return None, None, None
 
@@ -100,9 +96,11 @@ lstm_model, rf_model, trained_scaler = load_models(selected_ticker)
 if st.button("Generate Prediction"):
     if lstm_model is None or rf_model is None or trained_scaler is None:
         st.error(f"Models or Scaler for {selected_ticker} not found in the {MODEL_DIR} directory.")
+    elif not api_key:
+        st.error("API Key is required to fetch market data.")
     else:
-        with st.spinner("Fetching live data and running inference..."):
-            X_seq, X_flat, latest_price = fetch_and_preprocess(selected_ticker, trained_scaler)
+        with st.spinner("Fetching live data via Alpha Vantage..."):
+            X_seq, X_flat, latest_price = fetch_and_preprocess(selected_ticker, trained_scaler, api_key)
             
             if X_seq is not None:
                 lstm_prob = lstm_model.predict(X_seq, verbose=0)[0][0]
@@ -123,3 +121,6 @@ if st.button("Generate Prediction"):
                     st.error("SIGNAL: SELL")
                 else:
                     st.warning("SIGNAL: HOLD (Insufficient Confidence / Conflicting Signals)")
+            else:
+                st.error("Failed to retrieve or process data. Check your API key or ticker symbol.")
+
