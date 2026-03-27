@@ -15,8 +15,8 @@ st.set_page_config(page_title="Stock Predictor", layout="centered")
 st.title("Selective Strategy Stock Predictor")
 st.write("Hybrid LSTM & Random Forest Ensemble Model")
 
-st.sidebar.header("Settings")
-api_key = st.sidebar.text_input("Enter Alpha Vantage API Key", type="password")
+st.sidebar.header("Configuration")
+st.sidebar.info("API Key is loaded securely from Streamlit Secrets.")
 
 tickers = ['GOOG', 'MSFT', 'AAPL', 'NVDA']
 selected_ticker = st.selectbox("Select a Ticker", tickers)
@@ -47,12 +47,8 @@ def calculate_rsi(data, window=14):
 
 @st.cache_data(ttl=3600)
 def fetch_and_preprocess(ticker, _scaler, api_key):
-    if not api_key:
-        return None, None, None
-
     try:
         ts = TimeSeries(key=api_key, output_format='pandas')
-        # Changed 'full' to 'compact' for the free tier
         data, meta_data = ts.get_daily(symbol=ticker, outputsize='compact')
         
         data = data.rename(columns={'4. close': 'Close'})
@@ -97,9 +93,10 @@ lstm_model, rf_model, trained_scaler = load_models(selected_ticker)
 if st.button("Generate Prediction"):
     if lstm_model is None or rf_model is None or trained_scaler is None:
         st.error(f"Models or Scaler for {selected_ticker} not found in the {MODEL_DIR} directory.")
-    elif not api_key:
-        st.error("API Key is required to fetch market data.")
+    elif "ALPHA_VANTAGE_KEY" not in st.secrets:
+        st.error("API Key not found in Streamlit Secrets. Please add ALPHA_VANTAGE_KEY to your app settings.")
     else:
+        api_key = st.secrets["ALPHA_VANTAGE_KEY"]
         with st.spinner("Fetching live data via Alpha Vantage..."):
             X_seq, X_flat, latest_price = fetch_and_preprocess(selected_ticker, trained_scaler, api_key)
             
@@ -123,5 +120,4 @@ if st.button("Generate Prediction"):
                 else:
                     st.warning("SIGNAL: HOLD (Insufficient Confidence / Conflicting Signals)")
             else:
-                st.error("Failed to retrieve or process data. Check your API key or ticker symbol.")
-
+                st.error("Failed to retrieve or process data. Verify your ticker symbol and API quota.")
