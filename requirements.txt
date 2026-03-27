@@ -5,3 +5,4 @@ tensorflow
 scikit-learn
 joblib
 yfinance>=0.2.61
+curl_cffi>=0.7.0
