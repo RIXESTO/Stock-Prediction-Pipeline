@@ -4,7 +4,6 @@ import numpy as np
 import tensorflow as tf
 import joblib
 import yfinance as yf
-from sklearn.preprocessing import MinMaxScaler
 import os
 
 LOOKBACK = 10
@@ -23,12 +22,14 @@ selected_ticker = st.selectbox("Select a Ticker", tickers)
 def load_models(ticker):
     lstm_path = os.path.join(MODEL_DIR, f"{ticker}_lstm.h5")
     rf_path = os.path.join(MODEL_DIR, f"{ticker}_rf.joblib")
+    scaler_path = os.path.join(MODEL_DIR, f"{ticker}_scaler.joblib")
     
-    if os.path.exists(lstm_path) and os.path.exists(rf_path):
+    if os.path.exists(lstm_path) and os.path.exists(rf_path) and os.path.exists(scaler_path):
         lstm = tf.keras.models.load_model(lstm_path)
         rf = joblib.load(rf_path)
-        return lstm, rf
-    return None, None
+        scaler = joblib.load(scaler_path)
+        return lstm, rf, scaler
+    return None, None, None
 
 def calculate_rsi(data, window=14):
     diff = data.diff(1).dropna()
@@ -41,16 +42,18 @@ def calculate_rsi(data, window=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def fetch_and_preprocess(ticker):
-    # Fetch 1 year of data so we have enough history to calculate the 50-day SMA
+def fetch_and_preprocess(ticker, scaler):
     data = yf.download(ticker, period="1y", progress=False)
     
+    if data.empty:
+        st.error(f"Yahoo Finance API failed to return data for {ticker}. The server may be temporarily rate-limited.")
+        return None, None, None
+        
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.droplevel(1)
         
     df = data[['Close']].copy()
     
-    # Feature Engineering to match AAPL_preprocessed.csv format
     df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
     
     sma10 = df['Close'].rolling(window=10).mean()
@@ -65,15 +68,15 @@ def fetch_and_preprocess(ticker):
     df['Golden_Cross'] = (sma10 > sma50).astype(int)
     df['Death_Cross'] = (sma10 < sma50).astype(int)
     
-    # Drop rows with NaN values created by the rolling windows
     df.dropna(inplace=True)
     
-    # Exact column order from the preprocessed CSV
     features = ['Log_Returns', 'SMA10_Dist', 'SMA50_Dist', 'Volatility', 'RSI', 'Golden_Cross', 'Death_Cross']
     feature_data = df[features]
     
-    scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(feature_data.values)
+    if feature_data.empty:
+        st.error("Not enough historical data available to calculate technical indicators.")
+        return None, None, None
+    scaled_data = scaler.transform(feature_data.values)
     
     if len(scaled_data) >= LOOKBACK:
         X_seq = np.array([scaled_data[-LOOKBACK:]])
@@ -81,14 +84,14 @@ def fetch_and_preprocess(ticker):
         return X_seq, X_flat, float(df.iloc[-1]['Close'])
     return None, None, None
 
-lstm_model, rf_model = load_models(selected_ticker)
+lstm_model, rf_model, trained_scaler = load_models(selected_ticker)
 
 if st.button("Generate Prediction"):
-    if lstm_model is None or rf_model is None:
-        st.error(f"Models for {selected_ticker} not found in the {MODEL_DIR} directory.")
+    if lstm_model is None or rf_model is None or trained_scaler is None:
+        st.error(f"Models or Scaler for {selected_ticker} not found in the {MODEL_DIR} directory.")
     else:
         with st.spinner("Fetching live data and running inference..."):
-            X_seq, X_flat, latest_price = fetch_and_preprocess(selected_ticker)
+            X_seq, X_flat, latest_price = fetch_and_preprocess(selected_ticker, trained_scaler)
             
             if X_seq is not None:
                 lstm_prob = lstm_model.predict(X_seq, verbose=0)[0][0]
@@ -109,5 +112,3 @@ if st.button("Generate Prediction"):
                     st.error("SIGNAL: SELL")
                 else:
                     st.warning("SIGNAL: HOLD (Insufficient Confidence / Conflicting Signals)")
-            else:
-                st.error("Not enough data to generate a sequence.")
