@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-\
+import requests
 import joblib
 import yfinance as yf
 import os
@@ -45,18 +45,27 @@ def calculate_rsi(data, window=14):
 
 @st.cache_data(ttl=3600)
 def fetch_and_preprocess(ticker, _scaler):
-    tk = yf.Ticker(ticker)
-    data = tk.history(period="1y")
-    
-    if data.empty:
-        st.error(f"Yahoo Finance API failed to return data for {ticker}. The server may be temporarily rate-limited.")
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+    try:
+        # Pass the session directly to the Ticker object
+        tk = yf.Ticker(ticker, session=session)
+        data = tk.history(period="1y")
+        
+        if data.empty:
+            st.error(f"Yahoo Finance returned no data for {ticker}. The service might be temporarily blocked.")
+            return None, None, None
+            
+    except Exception as e:
+        st.error(f"Failed to fetch data: {str(e)}")
         return None, None, None
         
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.droplevel(1)
         
     df = data[['Close']].copy()
-    
     df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
     
     sma10 = df['Close'].rolling(window=10).mean()
@@ -64,10 +73,8 @@ def fetch_and_preprocess(ticker, _scaler):
     
     df['SMA10_Dist'] = (df['Close'] - sma10) / sma10
     df['SMA50_Dist'] = (df['Close'] - sma50) / sma50
-    
     df['Volatility'] = df['Log_Returns'].rolling(window=20).std()
     df['RSI'] = calculate_rsi(df['Close'], window=14)
-    
     df['Golden_Cross'] = (sma10 > sma50).astype(int)
     df['Death_Cross'] = (sma10 < sma50).astype(int)
     
@@ -77,14 +84,15 @@ def fetch_and_preprocess(ticker, _scaler):
     feature_data = df[features]
     
     if feature_data.empty:
-        st.error("Not enough historical data available to calculate technical indicators.")
         return None, None, None
-    scaled_data = scaler.transform(feature_data.values)
+    
+    scaled_data = _scaler.transform(feature_data.values)
     
     if len(scaled_data) >= LOOKBACK:
         X_seq = np.array([scaled_data[-LOOKBACK:]])
         X_flat = np.array([scaled_data[-1]])
         return X_seq, X_flat, float(df.iloc[-1]['Close'])
+        
     return None, None, None
 
 lstm_model, rf_model, trained_scaler = load_models(selected_ticker)

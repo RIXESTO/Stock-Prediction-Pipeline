@@ -6,3 +6,4 @@ scikit-learn
 joblib
 yfinance==0.2.54
 curl_cffi>=0.6.2
+requests
