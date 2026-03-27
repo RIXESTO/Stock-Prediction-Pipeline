@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-import requests
+\
 import joblib
 import yfinance as yf
 import os
@@ -44,11 +44,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def fetch_and_preprocess(ticker, scaler):
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    })
-    data = yf.download(ticker, period="1y", progress=False, session=session)
+    data = yf.download(ticker, period="1y", progress=False)
     
     if data.empty:
         st.error(f"Yahoo Finance API failed to return data for {ticker}. The server may be temporarily rate-limited.")
